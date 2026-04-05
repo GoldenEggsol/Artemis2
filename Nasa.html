@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NASA ARTEMIS II | LIVE MISSION TRACKER | HIGH FIDELITY DASHBOARD</title>
+    <style>
+        :root {
+            --nasa-blue: #0081c9;
+            --deep-space: #00040a;
+            --panel-bg: rgba(0, 10, 25, 0.85);
+            --border-blue: #00d4ff;
+            --value-white: #ffffff;
+            --label-cyan: #80f0ff;
+            --safety-green: #39ff14;
+            --alert-orange: #ff4500;
+            --caution-yellow: #ffdf00;
+            --glow-cyan: 0 0 8px rgba(0, 212, 255, 0.3);
+            --font-main: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            --font-data: 'Courier New', monospace;
+        }
+
+        body { margin: 0; background: var(--deep-space); color: var(--value-white); font-family: var(--font-main); overflow: hidden; height: 100vh; width: 100vw; }
+        canvas { display: block; cursor: crosshair; position: absolute; top: 0; left: 0; z-index: 1; }
+
+        #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 15px; box-sizing: border-box; z-index: 10; }
+
+        .panel { background: var(--panel-bg); border: 1px solid var(--border-blue); backdrop-filter: blur(8px); padding: 12px; box-shadow: var(--glow-cyan); border-radius: 4px; pointer-events: auto; }
+
+        .header-panel { display: flex; justify-content: space-between; align-items: flex-start; }
+        .footer-panel { display: flex; justify-content: space-between; align-items: flex-end; }
+
+        .side-panels { position: absolute; top: 130px; bottom: 130px; left: 15px; right: 15px; display: flex; justify-content: space-between; pointer-events: none; }
+        .side-column { width: 280px; display: flex; flex-direction: column; gap: 10px; }
+
+        h1 { margin: 0; letter-spacing: 10px; font-weight: 100; font-size: 28px; color: #fff; text-shadow: var(--glow-cyan); text-transform: uppercase; }
+        .crew { font-size: 9px; letter-spacing: 3px; opacity: 0.8; margin-top: 5px; text-align: center;}
+        .section-title { font-size: 10px; color: var(--border-blue); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; border-bottom: 1px solid var(--border-blue); padding-bottom: 3px;}
+
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+        .data-item { display: flex; flex-direction: column; }
+        .label { font-size: 9px; color: var(--label-cyan); text-transform: uppercase; letter-spacing: 1px; }
+        .value-block { display: flex; align-items: baseline; }
+        .value { font-size: 16px; font-family: var(--font-data); font-weight: bold; color: var(--value-white); }
+        .unit { font-size: 9px; color: var(--border-blue); margin-left: 4px; font-weight: normal;}
+        .sub-value { font-size: 11px; opacity: 0.6; color: var(--value-white); font-family: var(--font-data);}
+
+        .mission-timeline { display: flex; flex-direction: column; width: 400px; align-items: center;}
+        .timeline-bar-container { width: 100%; height: 10px; background: #081a2f; border: 1px solid var(--border-blue); margin-top: 6px; position: relative; overflow: hidden; border-radius: 5px;}
+        #timeline-progress { height: 100%; background: linear-gradient(90deg, #00d4ff, #00ff88); width: 0%; box-shadow: 0 0 10px rgba(0, 255, 136, 0.5); }
+        .milestones { display: flex; justify-content: space-between; width: 100%; font-size: 8px; color: var(--border-blue); margin-top: 4px; text-transform: uppercase;}
+
+        .gauge-container { width: 100%; height: 6px; background: #111; border: 1px solid var(--border-blue); margin-top: 4px; position: relative; border-radius: 3px;}
+        .gauge-fill { height: 100%; background: var(--safety-green); transition: width 0.3s ease; border-radius: 3px;}
+    </style>
+</head>
+<body>
+
+    <canvas id="space"></canvas>
+
+    <div id="hud">
+        <div class="header-panel">
+            <div class="panel" style="width: 280px;">
+                <span class="label">Mission Elapsed Time (MET)</span>
+                <div class="value" id="met" style="font-size: 24px; letter-spacing: 1px;">00:00:00:00</div>
+                <div class="label" style="font-size: 10px; margin-top: 3px;">Active Phase: <span id="current-phase" style="color: var(--safety-green);">PRE-LAUNCH</span></div>
+            </div>
+
+            <div style="text-align: center; display: flex; flex-direction: column; align-items: center; pointer-events: auto;">
+                <h1>ARTEMIS II</h1>
+                <div class="crew">COMMANDER: G.R. WISEMAN | PILOT: V.J. GLOVER | MS1: C.D. KOCH | MS2: J. HANSEN</div>
+            </div>
+
+            <div class="panel" style="width: 280px; text-align: right;">
+                <span class="label">Ground System Status / Comm. Link</span>
+                <div class="value" id="comm-status" style="color: var(--safety-green); font-size: 18px;">ACTIVE (DSN)</div>
+                <div style="font-size: 9px; opacity: 0.6;">DSN Station: Goldstone, CA | S-Band Up/Down</div>
+                <div style="font-size: 9px; opacity: 0.6;">Link Quality: 98.4% | Latency: <span id="comm-latency">--</span> ms</div>
+            </div>
+        </div>
+
+        <div class="side-panels">
+            <div class="side-column" id="left-column">
+                <div class="panel">
+                    <div class="section-title">Navigation & Trajectory Statistics</div>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">Velocity</span>
+                            <div class="value-block"><div class="value" id="spd-km">--</div><span class="unit">km/h</span></div>
+                            <div class="sub-value" id="spd-mi">-- mph</div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Acceleration</span>
+                            <div class="value-block"><div class="value" id="accel-g">--</div><span class="unit">G</span></div>
+                            <div class="sub-value" id="accel-ms">-- m/s²</div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Earth Altitude</span>
+                            <div class="value-block"><div class="value" id="alt-km">--</div><span class="unit">km</span></div>
+                            <div class="sub-value" id="alt-mi">-- miles</div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Lunar Distance</span>
+                            <div class="value-block"><div class="value" id="moon-km">--</div><span class="unit">km</span></div>
+                            <div class="sub-value" id="moon-mi">-- miles</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="section-title">Propulsion Systems (EUS / AJ10)</div>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">EUS LOX/LH2</span>
+                            <div class="value-block"><div class="value" id="eus-fuel">100.0</div><span class="unit">%</span></div>
+                            <div class="gauge-container"><div class="gauge-fill" id="eus-gauge" style="width: 100%;"></div></div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Orion OMS</span>
+                            <div class="value-block"><div class="value" id="oms-fuel">95.1</div><span class="unit">%</span></div>
+                            <div class="gauge-container"><div class="gauge-fill" id="oms-gauge" style="width: 95.1%;"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="side-column" id="right-column">
+                <div class="panel">
+                    <div class="section-title">Environmental Control (ECLSS)</div>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">Cabin Pressure</span>
+                            <div class="value-block"><div class="value">101.3</div><span class="unit">kPa</span></div>
+                            <div class="sub-value">14.70 psi</div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Oxygen Conc.</span>
+                            <div class="value-block"><div class="value">21.0</div><span class="unit">%</span></div>
+                            <div class="gauge-container"><div class="gauge-fill" style="width: 94%;"></div></div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Potable Water</span>
+                            <div class="value-block"><div class="value" id="h2o-level">87.5</div><span class="unit">L</span></div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Cabin Temp</span>
+                            <div class="value-block"><div class="value">21.1</div><span class="unit">°C</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="section-title">Electrical & Avionics Health</div>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">Main Bus A</span>
+                            <div class="value-block"><div class="value">124.5</div><span class="unit">V</span></div>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Battery SOC</span>
+                            <div class="value-block"><div class="value" id="bat-fuel">98.1</div><span class="unit">%</span></div>
+                            <div class="gauge-container"><div class="gauge-fill" id="bat-gauge" style="width: 98.1%;"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer-panel">
+            <div class="panel" style="width: 280px;">
+                <span class="label">Radiation Monitor</span>
+                <div class="value" id="radiation-level">0.021</div><span class="unit"> mSv/h</span>
+                <div style="font-size: 9px; opacity: 0.6;">Total Mission Dose: 0.352 mSv</div>
+                <div style="width: 100%; height: 4px; background: #111; border: 1px solid var(--border-blue); margin-top:4px;">
+                    <div style="width: 15%; height: 100%; background: var(--safety-green);"></div>
+                </div>
+            </div>
+
+            <div class="mission-timeline">
+                <span class="label">Overall Mission Progress</span>
+                <div class="timeline-bar-container">
+                    <div id="timeline-progress"></div>
+                </div>
+                <div class="milestones">
+                    <span>TLI</span>
+                    <span>Coast A</span>
+                    <span>Lunar Flyby</span>
+                    <span>Coast B</span>
+                    <span>TEI</span>
+                    <span>Entry</span>
+                </div>
+            </div>
+
+            <div class="panel" style="width: 280px; text-align: right;">
+                <span class="label">Target Destination</span>
+                <div class="value" style="color: var(--caution-yellow);">LUNAR FLYBY</div>
+                <div style="font-size: 9px; opacity: 0.6;">Pericynthion: 111.4 km</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('space');
+        const ctx = canvas.getContext('2d');
+        let width, height, mouseX=0, mouseY=0, camX=0, camY=0;
+        const stars = [];
+
+        const durationDays = 10.3;
+        const totalMs = durationDays * 24 * 60 * 60 * 1000;
+        
+        // Vraie date de lancement pour un suivi en temps réel parfait
+        const MISSION_START = new Date("2026-03-31T14:00:00Z");
+
+        const kmToMi = 0.621371;
+        
+        const earthImage = new Image();
+        earthImage.crossOrigin = "Anonymous";
+        earthImage.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/The_Blue_Marble_from_Apollo_17_cropped.jpg/800px-The_Blue_Marble_from_Apollo_17_cropped.jpg';
+        
+        const moonImage = new Image();
+        moonImage.crossOrigin = "Anonymous";
+        moonImage.src = 'https://upload.wikimedia.org/wikipedia/commons/e/e1/FullMoon2010.jpg';
+
+        function init() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            stars.length = 0;
+            for(let i=0; i<600; i++) {
+                stars.push({
+                    x: Math.random()*width*3-width*1.5,
+                    y: Math.random()*height*3-height*1.5,
+                    size: Math.random()*1.5,
+                    p: Math.random()*0.05,
+                    color: `hsl(${Math.random()*20+200}, 100%, ${Math.random()*20+80}%)`
+                });
+            }
+        }
+
+        function getOrbitPoint(t) {
+            const scaleX = width * 0.30; 
+            const scaleY = height * 0.20; 
+            return { 
+                x: -Math.cos(t * Math.PI * 2) * scaleX, 
+                y: Math.sin(t * Math.PI * 4) * scaleY 
+            };
+        }
+
+        function updateHUD(prog, pos) {
+            const now = new Date();
+            let diff = now - MISSION_START;
+            if (diff < 0) diff = 0; // Sécurité si on regarde avant le lancement
+
+            const d = Math.floor(diff/86400000), h = Math.floor((diff%86400000)/3600000), m = Math.floor((diff%3600000)/60000), s = Math.floor((diff%60000)/1000);
+            document.getElementById('met').innerText = `${String(d).padStart(2,'0')}D:${String(h).padStart(2,'0')}H:${String(m).padStart(2,'0')}M:${String(s).padStart(2,'0')}S`;
+
+            const curve = Math.sin(prog * Math.PI);
+            let speedKmH = 2000 + (1-curve) * 26000;
+            if(prog < 0.1) speedKmH = 28000 + (1 - prog*10)*11000;
+            if(prog > 0.9) speedKmH = 11000 + (prog-0.9)*10*29000;
+
+            const altKm = prog < 0.1 ? (prog * 10 * 300) + 160 : 380000 * (Math.pow(prog, 0.45));
+            const moonDistKm = Math.abs(384400 * (1-Math.pow(prog, 0.7)) - 111.4);
+            const accelG = prog < 0.1 ? 1.02 + (prog * 2.5) : (prog > 0.9 ? 1.02 + (prog-0.9)*30 : 0.03 + Math.random()*0.01);
+            const radiation = 0.021 + (altKm / 400000) * 0.1 + (Math.random()*0.005);
+            const commLatency = 20 + (altKm / 384400) * 1250; 
+
+            document.getElementById('alt-km').innerText = altKm.toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('alt-mi').innerText = (altKm * kmToMi).toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('spd-km').innerText = speedKmH.toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('spd-mi').innerText = (speedKmH * kmToMi).toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('moon-km').innerText = moonDistKm.toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('moon-mi').innerText = (moonDistKm * kmToMi).toLocaleString(undefined, {maximumFractionDigits:0});
+            document.getElementById('accel-g').innerText = accelG.toFixed(2);
+            document.getElementById('accel-ms').innerText = (accelG * 9.81).toFixed(2);
+            document.getElementById('radiation-level').innerText = radiation.toFixed(3);
+            document.getElementById('timeline-progress').style.width = (prog * 100) + '%';
+            document.getElementById('comm-latency').innerText = Math.floor(commLatency);
+
+            const fuelEus = Math.max(0, 100 - prog*10*10).toFixed(1);
+            const fuelOms = Math.max(0, 95.1 - prog*1.2).toFixed(1); 
+            const waterLevel = Math.max(0, 87.5 - prog*10*7.5).toFixed(1); 
+            const batteryLevel = Math.max(0, 98.1 - prog*10*1.5 + (1-prog)*10).toFixed(1); 
+
+            document.getElementById('eus-fuel').innerText = fuelEus;
+            document.getElementById('eus-gauge').style.width = fuelEus + '%';
+            document.getElementById('oms-fuel').innerText = fuelOms;
+            document.getElementById('oms-gauge').style.width = fuelOms + '%';
+            document.getElementById('h2o-level').innerText = waterLevel + ' L';
+            document.getElementById('bat-fuel').innerText = batteryLevel;
+            document.getElementById('bat-gauge').style.width = batteryLevel + '%';
+
+            let phase = "UNKNOWN";
+            if (prog <= 0) phase = "PRE-LAUNCH";
+            else if (prog < 0.01) phase = "LEO PARKING ORBIT";
+            else if (prog < 0.05) phase = "TLI MANEUVER (EUS)";
+            else if (prog < 0.45) phase = "TRANS-LUNAR COAST (Outbound)";
+            else if (prog < 0.55) phase = "LUNAR FLYBY";
+            else if (prog < 0.90) phase = "TRANS-EARTH COAST (Inbound)";
+            else if (prog < 1) phase = "RE-ENTRY & LANDING";
+            else phase = "MISSION COMPLETE";
+            document.getElementById('current-phase').innerText = phase;
+        }
+
+        function draw() {
+            camX += (mouseX * 50 - camX) * 0.05;
+            camY += (mouseY * 50 - camY) * 0.05;
+
+            ctx.fillStyle = '#00040a'; ctx.fillRect(0, 0, width, height);
+            ctx.save();
+            ctx.translate(width/2 - camX, height/2 - camY);
+
+            stars.forEach(s => {
+                ctx.fillStyle = s.color;
+                ctx.beginPath();
+                ctx.arc(s.x + camX*s.p*10, s.y + camY*s.p*10, s.size, 0, Math.PI*2);
+                ctx.fill();
+            });
+
+            const visualEarthR = Math.min(height * 0.15, 150); 
+            const visualMoonR = visualEarthR * 0.27; 
+
+            const planetCenterX_Earth = -width * 0.30; 
+            const planetCenterX_Moon = width * 0.30; 
+
+            ctx.beginPath(); ctx.strokeStyle = "rgba(0, 212, 255, 0.1)";
+            ctx.lineWidth = 1;
+            for(let i=0; i<=1; i+=0.005) {
+                const p = getOrbitPoint(i);
+                i===0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+
+            drawPlanet(planetCenterX_Earth, 0, visualEarthR, earthImage, "EARTH", true);
+            drawPlanet(planetCenterX_Moon, 0, visualMoonR, moonImage, "MOON", false);
+
+            const elapsed = Date.now() - MISSION_START;
+            const progress = Math.max(0, Math.min(elapsed / totalMs, 1));
+            const pos = getOrbitPoint(progress);
+
+            if (progress > 0) {
+                ctx.beginPath(); ctx.strokeStyle = '#00d4ff';
+                ctx.lineWidth = 2;
+                for(let i=0; i<=progress; i+=0.002) { 
+                    const pTrail = getOrbitPoint(i);
+                    if (i === 0) {
+                        ctx.moveTo(pTrail.x, pTrail.y);
+                    } else {
+                        ctx.lineTo(pTrail.x, pTrail.y);
+                    }
+                }
+                ctx.stroke();
+                ctx.lineWidth = 1;
+            }
+
+            ctx.shadowBlur = 15; ctx.shadowColor = '#ff4500';
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 4, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            ctx.font = '10px Courier New'; ctx.fillStyle = "rgba(255,255,255,0.8)";
+            ctx.fillText("ORION", pos.x + 10, pos.y + 3);
+
+            updateHUD(progress, pos);
+            ctx.restore();
+            requestAnimationFrame(draw);
+        }
+
+        function drawPlanet(x, y, radius, image, label, isEarth) {
+            ctx.save();
+            ctx.translate(x, y);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI*2);
+            ctx.closePath();
+            ctx.clip();
+
+            if (image.complete && image.naturalWidth > 0) {
+                ctx.drawImage(image, -radius, -radius, radius*2, radius*2);
+            } else {
+                ctx.fillStyle = isEarth ? "#0055ff" : "#888"; 
+                ctx.fill();
+            }
+
+            if(isEarth) {
+                ctx.shadowBlur = radius * 0.15; ctx.shadowColor = "rgba(100, 200, 255, 0.7)";
+                ctx.strokeStyle = "rgba(150, 230, 255, 0.5)";
+                ctx.lineWidth = 2; ctx.stroke(); ctx.shadowBlur = 0;
+            }
+
+            const gradient = ctx.createRadialGradient(-radius*0.3, -radius*0.2, radius*0.3, 0, 0, radius*1.1);
+            gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+            gradient.addColorStop(1, "rgba(0, 1, 10, 0.9)"); 
+            ctx.fillStyle = gradient;
+            ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI*2); ctx.fill();
+
+            ctx.restore(); 
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.strokeStyle = '#80f0ff';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI*2); ctx.stroke();
+
+            ctx.font = '11px Courier New';
+            ctx.fillStyle = '#00d4ff';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, 0, radius + 15);
+            ctx.restore();
+        }
+
+        window.addEventListener('resize', init);
+        window.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX - width / 2) / (width / 2);
+            mouseY = (e.clientY - height / 2) / (height / 2);
+        });
+
+        init();
+        requestAnimationFrame(draw);
+    </script>
+</body>
+</html>
